@@ -1,0 +1,465 @@
+<style>
+    :root {
+        --grid-cols: 1;
+        --grid-rows: 1;
+        --grid-size: 50px;
+    }
+
+    #grid {
+        display: grid;
+        grid-gap: 0;
+        grid-template-rows: repeat(var(--grid-rows), var(--grid-size));
+        grid-template-columns: repeat(var(--grid-cols), var(--grid-size));
+    }
+
+    .grid-item {
+        padding: 0;
+        border: 1px solid #ddd;
+        text-align: center;
+        width: var(--grid-size);
+        height: var(--grid-size);
+        background-color: white;
+    }
+
+    .full {
+        background-color: black;
+    }
+</style>
+
+Width: <input type="text" id="width" value="10">
+Height: <input type="text" id="height" value="10">
+<button onclick="generate()">Update Grid</button>
+<div id="grid"></div>
+
+<script>
+    // --- UI code ---
+    const grid = document.getElementById("grid");
+    var state = []
+
+    function calc_hint(arr) {
+        let current_run = 0;
+        let hint = "";
+        for (const e of arr) {
+            if (e) {
+                current_run++;
+            } else {
+                if (current_run > 0) {
+                    hint += " " + current_run
+                }
+                current_run = 0;
+            }
+        }
+        if (current_run > 0) {
+            hint += " " + current_run;
+        }
+        return hint;
+    }
+    function get_column(c) {
+        let col = new Array(state.length);
+        for (r = 0; r < state.length; r++) {
+            col[r] = state[r][c];
+        }
+        return col;
+    }
+    function toggle_cell(r, c) {
+        let id = r + "," + c;
+        var cell = document.getElementById(id);
+        cell.classList.toggle("full");
+        if (cell.classList.contains("full")) {
+            state[r][c] = true;
+        } else {
+            state[r][c] = false;
+        }
+        let row_hint = calc_hint(state[r]);
+        let col_hint = calc_hint(get_column(c));
+    }
+    function generate() {
+        grid.textContent = '';
+        var width = parseInt(document.getElementById("width").value);
+        grid.style.setProperty('--grid-cols', width);
+        var height = parseInt(document.getElementById("height").value);
+        grid.style.setProperty('--grid-rows', height);
+        state = new Array(width);
+        for (let r = 0; r < height; r++) {
+            state[r] = new Array(width).fill(false);
+            for (let c = 0; c < width; c++) {
+                let cell = document.createElement("div");
+                let id = r + "," + c;
+                cell.id = id;
+                cell.className = "grid-item";
+                cell.onclick = function () { toggle_cell(r, c) };
+                grid.appendChild(cell);
+            }
+        }
+    }
+    function set_state(state) {
+        for (r = 0; r < state.length; r++) {
+            for (c = 0; c < state[r].length; c++) {
+                var cell = document.getElementById(id);
+                if ((cell.classList.contains("full") && !state[r][c]) || (!cell.classList.contains("full") && state[r][c])) {
+                    toggle_cell(r,c);
+                }
+            }
+        }
+    }
+
+    // --- General helpers ---
+
+    // Calculate the sum of a 1-d array.
+    function sum(arr) {
+        let total = 0;
+        for (x of arr) {
+            total += x;
+        }
+        return total;
+    }
+    
+    // --- LAYOUTS ---
+    // A "layout" is just a 1d array if ints where every even index represents a number of empty grid spaces and every odd represents a number of filled in grid spaces.
+    // You can imagine a layout is just a set of restrictions with spaces added at the start, end, and every middle spot.
+    
+    
+    // Generate layouts (alternating sets of numbers where evens are empty and odds are full).
+    function generate_possible_layouts(width, restrictions) {
+        let layouts = [];
+        for (spaces of sum_to_n_zero_head_tail(width - sum(restrictions), (restrictions.length - 1) + 2)) {
+            let layout = [];
+            for (let i = 0; i < restrictions.length + spaces.length; i++) {
+                if (i %2 == 0) {
+                    layout.push(spaces[i / 2]);
+                } else {
+                    layout.push(restrictions[(i -1) / 2]);
+                }
+            }
+            layouts.push(layout);
+        }
+        return layouts;
+    }
+
+    // Finds all arrays of length len of integers that sum to n where the first and last can be zero, but all others must be at least 1.
+    function sum_to_n_zero_head_tail(n, len, head=true){
+        if (len == 1) {
+            return [[n]];
+        }
+        if (n == 0) {
+            let r = new Array(len);
+            r.fill(0);
+            return [r];
+        }
+        let ret = [];
+        let start = 1;
+        if (head) {
+            start = 0;
+        }
+        for (let i = start; i <= n - (len - 2); i++) {
+            let tails = sum_to_n_zero_head_tail(n - i, len - 1, head=false);
+            for (tail of tails) {
+                ret.push([i].concat(tail));
+            }
+        }
+        return ret;
+    }
+
+    // Convert a layout to a bitmap array (1-d)
+    function layout_to_bitmap_array(layout) {
+        let result = [];
+        for (let i = 0; i < layout.length; i++) {
+            for (let n = 0; n < layout[i]; n++) {
+                if (i%2 == 0) {
+                    // Even entries in layouts are empty spaces.
+                    result.push(EMPTY);
+                } else {
+                    // Odd entries in layouts are full in spaces.
+                    result.push(FULL);
+                }
+            }
+        }
+        return result;
+    }
+
+    // --- BITMAPS ---
+    // A bitmap is a single value where each bit is mapped to a different meaning.
+    // This allows us to compactly store our guesses / information for a single grid space while working out a solution.
+    // If we don't know what a GRID can contain then it will contain EITHER
+    // If we know the spaces is empty or filled in it will be EMPTY or FULL respectively.
+    // If we somehow remove all bits it is an error and set to NOT_POSSIBLE.
+
+    // We then use these bitmaps in arrays (1-d) and grids (2-d) to keep track of our work.
+
+    const NOT_POSSIBLE = 0;
+    const EMPTY = 1;
+    const FULL = 2;
+    const EITHER = EMPTY | FULL;
+
+
+    // If 2 bitmap arrays (1 dimensional) have the same entries or not
+    function bitmap_array_eq(a, b) {
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] != b[i]) {
+                return false
+            }
+        }
+        return true
+    }
+
+    // Run a bitwise OR on all entries of 2 bitmap arrays (1-d)
+    // This is useful for combining possible states (e.g. FULL | EMPTY means we just get EITHER)
+    function bitwise_or_bitmap_arrays(a, b) {
+        let ret = [];
+        for (let i = 0; i < a.length; i++) {
+            ret.push(a[i] | b[i]);
+        }
+        return ret;
+    }
+
+    // Run a bitwise AND on all entries of 2 bitmap arrays (1-d)
+    // This is useful for evaluating if 2 guesses are compatible (e.g. FULL & EMPTY is NOT_POSSIBLE)
+    function bitwise_and_bitmap_arrays(a, b) {
+        let ret = [];
+        for (let i = 0; i < a.length; i++) {
+            ret.push(a[i] & b[i]);
+        }
+        return ret;
+    }
+
+    // Extract a single column from a bitmap grid
+    function get_bitmap_col(col, bitmap_grid) {
+        let ret = [];
+        for (row of bitmap_grid) {
+            ret.push(row[col]);
+        }
+        return ret;
+    }
+
+    // Set (mutate) a column in a bitmap grid
+    function set_bitmap_col(col_number, column_values, bitmap_grid) {
+        for (let row_number = 0; row_number < column_values.length; row_number++) {
+            bitmap_grid[row_number][col_number] = column_values[row_number];
+        }
+    }
+
+    // Get a pretty representation of a 2-d bitmap grid
+    function pretty_bitmap_grid(bitmap_grid) {
+        let s = ""
+        for (r of bitmap_grid) {
+            s += pretty_bitmap_array(r) + "\n";
+        }
+        return s
+    }
+
+    // Get a pretty representation of a 1-d bitmap array
+    function pretty_bitmap_array(bitmap) {
+        let ret = "";
+        for (v of bitmap) {
+            if (v == 1) {
+                ret += "_";
+            } else if (v == 2) {
+                ret += "X";
+            } else if (v == EMPTY | FULL) {
+                ret += "?"
+            } else {
+                ret += "WARNING";
+            }
+        }
+        return ret;
+    }
+
+    // -- SOLVER ---
+
+    // Do our best to solve an entire puzzle.
+    function solve(width, height, row_restrictions, col_restrictions) {
+        let rows = new Array(height);
+        for (let r =0; r < height; r++) {
+            rows[r] = new Array(width).fill(EITHER);
+        }
+        let [iterations, actions] = collapse_until_stable(rows, row_restrictions, col_restrictions);
+        console.log("done in " + iterations + " iterations and " + actions + " actions");
+    }
+
+    // Run collapse until no more inferences can be run
+    function collapse_until_stable(rows, row_restrictions, col_restrictions) {
+        let iteration = 0;
+        let total_actions = 0;
+        while (true) {
+            console.log("----");
+            num_actions = collapse_bitmap_grid_simple(rows, row_restrictions, col_restrictions);
+            iteration++;
+            if (num_actions > 0) {
+                console.log(pretty_bitmap_grid(rows))
+                total_actions += num_actions;
+            } else {
+                break
+            }
+        }
+        return [iteration, total_actions];
+    }
+
+    // TODO: Collapse the row or column with the lowest entropy and propagate its values to all relevant other columns and rows based on what was updated.
+    function collapse_bitmap_grid_entropy(bitmap_rows, row_restrictions, col_restrictions) {
+        // calculate the entropy of very row and column and add them to the priority queue
+        // in a loop:
+            // find the row or column with the lowest entropy (maybe keep a priority queue, can't do a map since some low entropy rows will be stable / stuck)
+            // collapse the row's possibilities
+            // update the row's entropy
+            // for every updated value add the neighbors (rows or columns that shared a value that changed) to the priority queue.
+            // if we want to get fancy keep a visited set of restriction + bitmap string --> entropy (or possibilities)
+    }
+
+    // Simply loop over every row and every column and run collapse_bitmap_array on each one once.
+    function collapse_bitmap_grid_simple(bitmap_rows, row_restrictions, col_restrictions) {
+        let total_actions = 0;
+        for (let row = 0; row < bitmap_rows.length; row++) {
+            let new_row = collapse_bitmap_array(row_restrictions[row], bitmap_rows[row]);
+            if (!bitmap_array_eq(new_row, bitmap_rows[row])) {
+                console.log("collapsed row: " + [row] + pretty_bitmap_array(bitmap_rows[row]) + "-->" + pretty_bitmap_array(new_row));
+                bitmap_rows[row] = new_row;
+                total_actions++;
+            }
+            
+        }
+        for (let col = 0; col < bitmap_rows[0].length; col++) {
+            let old_col = get_bitmap_col(col, bitmap_rows);
+            let new_col = collapse_bitmap_array(col_restrictions[col], old_col);
+            if (!bitmap_array_eq(old_col, new_col)) {
+                console.log("collapsed col: " + [col] + pretty_bitmap_array(old_col) + "-->" + pretty_bitmap_array(new_col));
+                set_bitmap_col(col, new_col, bitmap_rows);
+                total_actions++;
+            }
+        }
+        return total_actions;
+    }
+
+    // Run inference for a single 1-d bitmap based on a set of restrictions (1-d array) and return an updated version of the row
+    function collapse_bitmap_array(restrictions, row_bitmap) {
+        let possible = []
+        let candidates = generate_possible_layouts(row_bitmap.length, restrictions);
+        // Remove entries that vliolate existing bitmap
+        for (layout of candidates) {
+            let b = layout_to_bitmap_array(layout);
+            let keep = true;
+            let possible_contradictions = bitwise_and_bitmap_arrays(row_bitmap, b)
+            for (bitmap of possible_contradictions) {
+                if (bitmap == NOT_POSSIBLE) {
+                    keep = false;
+                    break;
+                }
+            }
+            if (keep) {
+                possible.push(b);
+            }
+        }
+        if (possible.length == 0) {
+            throw new Error("no solutions found");
+        }
+        // Combine the remaining bitmaps into a single updated bitmap for the row
+        let combined = possible[0];
+        for (let i = 1; i < possible.length; i++) {
+            combined = bitwise_or_bitmap_arrays(combined, possible[i]);
+        }
+        return combined
+    }
+
+    
+
+    
+
+
+    test_row_restrictions_basic = [
+        [2, 2],
+        [1, 1, 1],
+        [1, 1],
+        [1,1,1],
+        [3]
+    ]
+    test_col_restrictions_basic = [
+        [4],
+        [1,1],
+        [1,2],
+        [1,1],
+        [4],
+    ]
+    test_row_restrictions = [
+        [1,1],
+        [1,1],
+        [1,1],
+        [1,1],
+        [1,1,1],
+        
+        [2,1,1,3],
+        [4,2,4],
+        [4,6],
+        [1,3,3,4],
+        [3,10,5],
+        
+        [4,2,5,7],
+        [4,3,4,5,2],
+        [11,12],
+        [9,14],
+        [6,17],
+        
+        [5,15,2],
+        [5,13,1],
+        [5,9],
+        [2,3,3],
+        [2,2,3],
+        
+        [2,2],
+        [1,2],
+        [2,3],
+        [2,3],
+        [2,3],
+        
+        [1,3],
+        [2,3],
+        [2,3],
+        [1,2],
+        [1,1],
+    ]
+    test_col_restrictions = [
+        [1],
+        [1],
+        [1],
+        [2],
+        [1],
+
+        [2],
+        [1,3],
+        [1,2],
+        [2,3],
+        [2,2],
+        
+        [6],
+        [1,5,3],
+        [1,17],
+        [2,9,4],
+        [3,9],
+        
+        [14],
+        [8,4],
+        [11,2],
+        [1],
+        [2],
+        
+        [4],
+        [6],
+        [6],
+        [7],
+        [8],
+        
+        [12],
+        [19],
+        [1,22],
+        [5,18],
+        [3,2,6,6],
+
+        [4,7],
+        [2,6],
+        [5],
+        [3],
+        [1],
+        
+        [2],
+        [2],
+    ]
+    solve(37, 30, test_row_restrictions, test_col_restrictions);
+</script>
